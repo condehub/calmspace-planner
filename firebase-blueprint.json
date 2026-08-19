@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "user": {
+      "title": "User",
+      "description": "Represents a user's progress and achievements in the Spoon Theory Voyage Planner.",
+      "type": "object",
+      "properties": {
+        "xp": { "type": "integer" },
+        "level": { "type": "integer" },
+        "spoonsUsed": { "type": "integer" },
+        "maxSpoons": { "type": "integer" },
+        "badges": {
+          "type": "object",
+          "properties": {
+            "firstStep": { "type": "boolean" },
+            "microMaster": { "type": "boolean" },
+            "deepFocus": { "type": "boolean" },
+            "energized": { "type": "boolean" },
+            "levelUp": { "type": "boolean" }
+          },
+          "required": ["firstStep", "microMaster", "deepFocus", "energized", "levelUp"]
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["xp", "level", "spoonsUsed", "maxSpoons", "badges"]
+    },
+    "task": {
+      "title": "Task",
+      "description": "Represents an individual goal or task scheduled for a specific day or unscheduled.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "spoons": { "type": "integer", "enum": [1, 2, 3] },
+        "subtasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string", "minLength": 1, "maxLength": 100 },
+              "completed": { "type": "boolean" }
+            },
+            "required": ["text", "completed"]
+          }
+        },
+        "completed": { "type": "boolean" },
+        "dayOfWeek": { "type": "string" },
+        "priority": { "type": "string", "enum": ["Low", "Medium", "High"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "spoons", "subtasks", "completed", "dayOfWeek", "priority"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "user",
+      "description": "User account information and system metadata including achievements."
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": "task",
+      "description": "User specific tasks/goals for the daily or weekly views."
+    }
+  }
+}
