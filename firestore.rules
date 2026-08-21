@@ -57,8 +57,10 @@ service cloud.firestore {
         && data.priority is string && (data.priority == 'Low' || data.priority == 'Medium' || data.priority == 'High')
         && data.subtasks is list
         && data.createdAt is string
+        && (!data.keys().hasAny(['rewarded']) || data.rewarded is bool)
+        && (!data.keys().hasAny(['overdue']) || data.overdue is bool)
         && data.keys().hasAll(['id', 'title', 'spoons', 'completed', 'dayOfWeek', 'priority', 'subtasks'])
-        && data.keys().size() <= 8;
+        && data.keys().size() <= 10;
     }
 
     // Match patterns

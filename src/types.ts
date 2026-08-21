@@ -1,6 +1,7 @@
 export interface SubTask {
   text: string;
   completed: boolean;
+  rewarded?: boolean; // completion XP already awarded for this micro-step
 }
 
 export interface Task {
@@ -12,6 +13,12 @@ export interface Task {
   dayOfWeek?: string; // "Monday", "Tuesday", etc. or undefined for unscheduled/today
   priority?: "Low" | "Medium" | "High";
   createdAt?: string; // ISO timestamp, used for stable ordering (newest first)
+  rewarded?: boolean; // completion XP already awarded (idempotent reward)
+  overdue?: boolean;  // rolled over from a previous day
+}
+
+export interface CompletedTask extends Task {
+  completedAt: string; // ISO timestamp when it was archived into history
 }
 
 export interface Badges {
@@ -29,4 +36,6 @@ export interface AppState {
   spoonsUsed: number;
   maxSpoons: number;
   badges: Badges;
+  history: CompletedTask[]; // archived completed tasks
+  lastActiveDate?: string;  // ISO date (YYYY-MM-DD) of last app open, for day rollover
 }

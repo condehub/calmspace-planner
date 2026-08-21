@@ -38,7 +38,8 @@
             "type": "object",
             "properties": {
               "text": { "type": "string", "minLength": 1, "maxLength": 100 },
-              "completed": { "type": "boolean" }
+              "completed": { "type": "boolean" },
+              "rewarded": { "type": "boolean" }
             },
             "required": ["text", "completed"]
           }
@@ -46,7 +47,9 @@
         "completed": { "type": "boolean" },
         "dayOfWeek": { "type": "string" },
         "priority": { "type": "string", "enum": ["Low", "Medium", "High"] },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "rewarded": { "type": "boolean" },
+        "overdue": { "type": "boolean" }
       },
       "required": ["id", "title", "spoons", "subtasks", "completed", "dayOfWeek", "priority"]
     }
