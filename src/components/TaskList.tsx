@@ -3,6 +3,15 @@ import { motion, AnimatePresence } from "motion/react";
 import { Task } from "../types";
 import { Trash2 } from "lucide-react";
 
+const formatCreatedAt = (iso?: string): string => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  return `${day}/${month}/${d.getFullYear()}`;
+};
+
 interface TaskListProps {
   tasks: Task[];
   onToggleTask: (taskId: string) => void;
@@ -126,6 +135,19 @@ export const TaskList: React.FC<TaskListProps> = ({
                             +{xpReward} XP
                           </span>
                         </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 mt-1">
+                        {task.overdue && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-tight bg-red-50 text-red-700 border border-red-100">
+                            Atrasada
+                          </span>
+                        )}
+                        {task.createdAt && (
+                          <span className="text-[9px] text-slate-400 font-medium">
+                            criada em {formatCreatedAt(task.createdAt)}
+                          </span>
+                        )}
                       </div>
                     </div>
 
