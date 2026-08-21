@@ -6,6 +6,11 @@ import {
   removeSpoons,
   badgesForTaskCompletion,
   badgesForTaskCreation,
+  isTaskForDay,
+  isPastDay,
+  isRewardPending,
+  rolloverTasks,
+  tasksToSync,
 } from "./gameLogic";
 import { AppState, Badges, Task } from "../types";
 
@@ -24,6 +29,7 @@ const makeState = (overrides: Partial<AppState> = {}): AppState => ({
   spoonsUsed: 0,
   maxSpoons: 12,
   badges: { ...baseBadges },
+  history: [],
   ...overrides,
 });
 
@@ -178,5 +184,100 @@ describe("badgesForTaskCreation", () => {
 
     expect(result.badges.microMaster).toBe(true);
     expect(result.unlocked).toEqual([]);
+  });
+});
+
+describe("isTaskForDay", () => {
+  it("matches a task scheduled for the given day", () => {
+    expect(isTaskForDay(makeTask({ dayOfWeek: "Monday" }), "Monday")).toBe(true);
+  });
+
+  it("does not match a task scheduled for another day", () => {
+    expect(isTaskForDay(makeTask({ dayOfWeek: "Tuesday" }), "Monday")).toBe(false);
+  });
+});
+
+describe("isRewardPending", () => {
+  it("is pending when the task was never rewarded", () => {
+    expect(isRewardPending(undefined)).toBe(true);
+    expect(isRewardPending(false)).toBe(true);
+  });
+
+  it("is not pending once rewarded", () => {
+    expect(isRewardPending(true)).toBe(false);
+  });
+});
+
+describe("isPastDay", () => {
+  it("is false for Unscheduled or undefined", () => {
+    expect(isPastDay("Unscheduled", "Wednesday")).toBe(false);
+    expect(isPastDay(undefined, "Wednesday")).toBe(false);
+  });
+
+  it("is true for a weekday earlier in the week", () => {
+    expect(isPastDay("Monday", "Wednesday")).toBe(true);
+    expect(isPastDay("Tuesday", "Wednesday")).toBe(true);
+  });
+
+  it("is false for today or a later weekday", () => {
+    expect(isPastDay("Wednesday", "Wednesday")).toBe(false);
+    expect(isPastDay("Thursday", "Wednesday")).toBe(false);
+  });
+});
+
+describe("rolloverTasks", () => {
+  const completed = makeTask({ id: "done", dayOfWeek: "Monday", completed: true });
+  const pending = makeTask({ id: "todo", dayOfWeek: "Monday", completed: false });
+  const today = makeTask({ id: "today", dayOfWeek: "Wednesday", completed: false });
+  const future = makeTask({ id: "future", dayOfWeek: "Friday", completed: false });
+  const unscheduled = makeTask({ id: "unscheduled", dayOfWeek: "Unscheduled", completed: false });
+
+  it("archives completed past-day tasks into history", () => {
+    const { tasks, history } = rolloverTasks(
+      [completed],
+      "Wednesday",
+      "2026-08-21T10:00:00Z"
+    );
+
+    expect(tasks).toEqual([]);
+    expect(history).toHaveLength(1);
+    expect(history[0].id).toBe("done");
+    expect(history[0].completedAt).toBe("2026-08-21T10:00:00Z");
+  });
+
+  it("carries unfinished past-day tasks to today marked overdue", () => {
+    const { tasks, history } = rolloverTasks(
+      [pending],
+      "Wednesday",
+      "2026-08-21T10:00:00Z"
+    );
+
+    expect(history).toEqual([]);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].dayOfWeek).toBe("Wednesday");
+    expect(tasks[0].overdue).toBe(true);
+  });
+
+  it("leaves today, future and unscheduled tasks untouched", () => {
+    const { tasks, history } = rolloverTasks(
+      [today, future, unscheduled],
+      "Wednesday",
+      "2026-08-21T10:00:00Z"
+    );
+
+    expect(history).toEqual([]);
+    expect(tasks).toHaveLength(3);
+    expect(tasks.map((t) => t.dayOfWeek)).toEqual(["Wednesday", "Friday", "Unscheduled"]);
+  });
+});
+
+describe("tasksToSync", () => {
+  it("returns only tasks whose ids are missing from the remote set", () => {
+    const a = makeTask({ id: "a" });
+    const b = makeTask({ id: "b" });
+    const result = tasksToSync([a, b], new Set(["a"]));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("b");
   });
 });

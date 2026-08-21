@@ -1,4 +1,4 @@
-import { AppState, Badges, Task } from "../types";
+import { AppState, Badges, CompletedTask, Task } from "../types";
 
 // Centralized, deterministic game rules extracted from App.tsx. These helpers
 // never call setState/showToast/Date.now(), so the logic can be unit-tested in
@@ -105,4 +105,72 @@ export function badgesForTaskCreation(
   }
 
   return { badges: nextBadges, unlocked };
+}
+
+// --- Sprint 2 helpers ---
+
+export const DAYS_OF_WEEK = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+// Whether a task is scheduled for a specific weekday (used by the "Daily Voyage").
+export function isTaskForDay(task: Task, dayName: string): boolean {
+  return task.dayOfWeek === dayName;
+}
+
+// Whether completion XP/badges are still pending for a task or sub-step.
+export function isRewardPending(rewarded: boolean | undefined): boolean {
+  return rewarded !== true;
+}
+
+// Whether a weekday is earlier in the week than today (i.e. already passed).
+// "Unscheduled"/undefined are never considered past.
+export function isPastDay(
+  dayOfWeek: string | undefined,
+  todayName: string
+): boolean {
+  if (!dayOfWeek || dayOfWeek === "Unscheduled") return false;
+  const dayIndex = DAYS_OF_WEEK.indexOf(dayOfWeek);
+  const todayIndex = DAYS_OF_WEEK.indexOf(todayName);
+  if (dayIndex === -1 || todayIndex === -1) return false;
+  return dayIndex < todayIndex;
+}
+
+// Day rollover: archive completed tasks of past days into history, and carry
+// unfinished past-day tasks to today marked as overdue.
+export function rolloverTasks(
+  tasks: Task[],
+  todayName: string,
+  completedAt: string
+): { tasks: Task[]; history: CompletedTask[] } {
+  const nextTasks: Task[] = [];
+  const history: CompletedTask[] = [];
+
+  for (const task of tasks) {
+    if (isPastDay(task.dayOfWeek, todayName)) {
+      if (task.completed) {
+        history.push({ ...task, completedAt });
+      } else {
+        nextTasks.push({ ...task, dayOfWeek: todayName, overdue: true });
+      }
+    } else {
+      nextTasks.push(task);
+    }
+  }
+
+  return { tasks: nextTasks, history };
+}
+
+// Offline→cloud migration: which local tasks still need to be uploaded.
+export function tasksToSync(
+  localTasks: Task[],
+  existingIds: Set<string>
+): Task[] {
+  return localTasks.filter((t) => !existingIds.has(t.id));
 }
