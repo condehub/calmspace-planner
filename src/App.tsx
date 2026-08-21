@@ -16,6 +16,10 @@ import {
   removeSpoons,
   badgesForTaskCompletion,
   badgesForTaskCreation,
+  isTaskForDay,
+  isRewardPending,
+  rolloverTasks,
+  tasksToSync,
 } from "./lib/gameLogic";
 import { RefreshCcw, Bell, Calendar } from "lucide-react";
 
@@ -56,6 +60,30 @@ const generateId = (): string => {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 };
 
+const todayDateString = (): string => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+// Runs the day rollover when a new day is detected: archive completed past-day
+// tasks into history and carry unfinished ones to today marked overdue.
+const rolloverIfNeeded = (state: AppState): AppState => {
+  const today = todayDateString();
+  if (!state.lastActiveDate || state.lastActiveDate === today) {
+    return { ...state, lastActiveDate: today };
+  }
+  const { tasks, history } = rolloverTasks(state.tasks, getTodayName(), new Date().toISOString());
+  return {
+    ...state,
+    tasks,
+    history: [...history, ...(state.history || [])],
+    lastActiveDate: today,
+  };
+};
+
 interface Toast {
   id: number;
   message: string;
@@ -74,6 +102,7 @@ const DEFAULT_STATE: AppState = {
     energized: false,
     levelUp: false,
   },
+  history: [],
 };
 
 // Toast copy for badge unlocks, keyed by badge name so every unlock site shows
@@ -126,16 +155,18 @@ export default function App() {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          setState({
+          const merged: AppState = {
             ...DEFAULT_STATE,
             ...parsed,
             badges: { ...DEFAULT_STATE.badges, ...parsed.badges },
-          });
+            history: parsed.history || [],
+          };
+          setState(rolloverIfNeeded(merged));
         } catch (e) {
           console.error("Failed to parse saved state", e);
         }
       } else {
-        setState(DEFAULT_STATE);
+        setState({ ...DEFAULT_STATE, lastActiveDate: todayDateString() });
       }
       return;
     }
@@ -196,10 +227,32 @@ export default function App() {
             dayOfWeek: data.dayOfWeek,
             priority: data.priority,
             createdAt: data.createdAt,
+            rewarded: data.rewarded,
+            overdue: data.overdue,
           });
         });
         // Sort newest first by createdAt
         fetchedTasks.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+
+        // Migrate local offline tasks that aren't yet in Firestore (idempotent).
+        const existingIds = new Set(fetchedTasks.map((t) => t.id));
+        for (const task of tasksToSync(stateRef.current.tasks, existingIds)) {
+          setDoc(doc(db, "users", userId, "tasks", task.id), {
+            id: task.id,
+            title: task.title,
+            spoons: task.spoons,
+            completed: task.completed,
+            dayOfWeek: task.dayOfWeek || "Unscheduled",
+            priority: task.priority || "Medium",
+            subtasks: task.subtasks || [],
+            createdAt: task.createdAt || new Date().toISOString(),
+            rewarded: task.rewarded,
+            overdue: task.overdue,
+          }).catch((err) =>
+            handleFirestoreError(err, OperationType.WRITE, `users/${userId}/tasks/${task.id}`)
+          );
+        }
+
         setState((prev) => ({
           ...prev,
           tasks: fetchedTasks,
@@ -255,7 +308,9 @@ export default function App() {
           dayOfWeek: task.dayOfWeek || "Unscheduled",
           priority: task.priority || "Medium",
           subtasks: task.subtasks || [],
-          createdAt: new Date().toISOString(),
+          createdAt: task.createdAt || new Date().toISOString(),
+          rewarded: task.rewarded,
+          overdue: task.overdue,
         });
       } catch (err) {
         handleFirestoreError(err, OperationType.WRITE, `users/${userId}/tasks/${task.id}`);
@@ -320,7 +375,8 @@ export default function App() {
     priority?: "Low" | "Medium" | "High"
   ) => {
     const mappedSubtasks = subtasks.map((text) => ({ text, completed: false }));
-    const taskDay = day || "Unscheduled";
+    const todayName = getTodayName();
+    const taskDay = day || todayName;
     const newTask: Task = {
       id: generateId(),
       title,
@@ -333,7 +389,6 @@ export default function App() {
     };
 
     let updatedSpoonsUsed = state.spoonsUsed;
-    const todayName = getTodayName();
     if (affectsToday(taskDay, todayName)) {
       updatedSpoonsUsed = addSpoons(updatedSpoonsUsed, spoons);
     }
@@ -385,12 +440,15 @@ export default function App() {
 
     const task = state.tasks[taskIndex];
     const isNowCompleted = !task.completed;
+    // XP/badges are idempotent: only award on the first completion.
+    const shouldReward = isNowCompleted && isRewardPending(task.rewarded);
 
     const updatedTasks = state.tasks.map((t) => {
       if (t.id === taskId) {
         return {
           ...t,
           completed: isNowCompleted,
+          rewarded: isNowCompleted ? true : t.rewarded,
           subtasks: t.subtasks.map((sub) => ({ ...sub, completed: isNowCompleted })),
         };
       }
@@ -409,24 +467,26 @@ export default function App() {
         tempState.spoonsUsed = updatedSpoonsUsed;
       }
 
-      const xpEarned = 50 + task.spoons * 15;
-      const xpResult = applyXP(tempState, xpEarned);
-      tempState = xpResult.state;
-      xpResult.levelUps.forEach((lvl) =>
-        showToast(`🎉 Level Up! You reached Level ${lvl}!`)
-      );
-      xpResult.unlockedBadges.forEach((badge) =>
-        showToast(BADGE_TOAST_MESSAGES[badge])
-      );
-      showToast(`Goal Completed! +${xpEarned} XP`);
+      if (shouldReward) {
+        const xpEarned = 50 + task.spoons * 15;
+        const xpResult = applyXP(tempState, xpEarned);
+        tempState = xpResult.state;
+        xpResult.levelUps.forEach((lvl) =>
+          showToast(`🎉 Level Up! You reached Level ${lvl}!`)
+        );
+        xpResult.unlockedBadges.forEach((badge) =>
+          showToast(BADGE_TOAST_MESSAGES[badge])
+        );
+        showToast(`Goal Completed! +${xpEarned} XP`);
 
-      // Start from the badges returned by applyXP (which may already include
-      // `levelUp`), so no unlock is dropped when we persist.
-      const completionBadges = badgesForTaskCompletion(task, tempState.badges);
-      tempState.badges = completionBadges.badges;
-      completionBadges.unlocked.forEach((badge) =>
-        showToast(BADGE_TOAST_MESSAGES[badge])
-      );
+        // Start from the badges returned by applyXP (which may already include
+        // `levelUp`), so no unlock is dropped when we persist.
+        const completionBadges = badgesForTaskCompletion(task, tempState.badges);
+        tempState.badges = completionBadges.badges;
+        completionBadges.unlocked.forEach((badge) =>
+          showToast(BADGE_TOAST_MESSAGES[badge])
+        );
+      }
     } else {
       if (taskAffectsToday) {
         updatedSpoonsUsed = addSpoons(state.spoonsUsed, task.spoons);
@@ -438,6 +498,7 @@ export default function App() {
       const updatedTask = {
         ...task,
         completed: isNowCompleted,
+        rewarded: isNowCompleted ? true : task.rewarded,
         subtasks: task.subtasks.map((sub) => ({ ...sub, completed: isNowCompleted })),
       };
       await saveTaskToDb(updatedTask);
@@ -457,11 +518,20 @@ export default function App() {
     const parentTask = state.tasks.find((t) => t.id === taskId);
     if (!parentTask) return;
 
+    const targetSub = parentTask.subtasks[subIndex];
+    const subtaskCompletedNow = !targetSub.completed;
+    // Idempotent: only award +5 XP the first time this micro-step is completed.
+    const shouldReward = subtaskCompletedNow && isRewardPending(targetSub.rewarded);
+
     const updatedTasks = state.tasks.map((t) => {
       if (t.id === taskId) {
         const updatedSubs = t.subtasks.map((sub, idx) => {
           if (idx === subIndex) {
-            return { ...sub, completed: !sub.completed };
+            return {
+              ...sub,
+              completed: !sub.completed,
+              rewarded: !sub.completed ? true : sub.rewarded,
+            };
           }
           return sub;
         });
@@ -470,10 +540,9 @@ export default function App() {
       return t;
     });
 
-    const subtaskCompletedNow = !parentTask.subtasks[subIndex].completed;
     let tempState = { ...state, tasks: updatedTasks };
 
-    if (subtaskCompletedNow) {
+    if (shouldReward) {
       const xpResult = applyXP(tempState, 5);
       tempState = xpResult.state;
       xpResult.levelUps.forEach((lvl) =>
@@ -722,7 +791,7 @@ export default function App() {
               <div className="lg:col-span-7 space-y-6">
                 <SpoonBudget maxSpoons={state.maxSpoons} spoonsUsed={state.spoonsUsed} />
                 <TaskList
-                  tasks={state.tasks}
+                  tasks={state.tasks.filter((t) => isTaskForDay(t, getTodayName()))}
                   onToggleTask={handleToggleTask}
                   onToggleSubtask={handleToggleSubtask}
                   onDeleteTask={handleDeleteTask}
