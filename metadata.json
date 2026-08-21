@@ -2,5 +2,7 @@
   "name": "CalmSpace Planner",
   "description": "An interactive, calming scheduling and task-management application designed for autistic and ADHD users, featuring Spoon Theory energy budgeting, micro-step task breakdowns, a visual focus timer, and a gentle XP and badge leveling system.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
