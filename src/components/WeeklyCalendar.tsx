@@ -13,10 +13,10 @@ import {
 
 interface WeeklyCalendarProps {
   tasks: Task[];
-  onToggleTask: (taskId: number) => void;
-  onToggleSubtask: (taskId: number, subIndex: number) => void;
-  onDeleteTask: (taskId: number) => void;
-  onUpdateTaskDay: (taskId: number, day: string) => void;
+  onToggleTask: (taskId: string) => void;
+  onToggleSubtask: (taskId: string, subIndex: number) => void;
+  onDeleteTask: (taskId: string) => void;
+  onUpdateTaskDay: (taskId: string, day: string) => void;
   onAddTask: (title: string, spoons: number, subtasks: string[], day?: string, priority?: "Low" | "Medium" | "High") => void;
 }
 
@@ -176,6 +176,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                               type="checkbox"
                               checked={task.completed}
                               onChange={() => onToggleTask(task.id)}
+                              aria-label={
+                                task.completed
+                                  ? `Mark "${task.title}" incomplete`
+                                  : `Mark "${task.title}" complete`
+                              }
                               className="mt-0.5 w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-400 cursor-pointer"
                             />
                             <div className="flex-1 min-w-0">
@@ -209,6 +214,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                 <select
                                   value={day}
                                   onChange={(e) => onUpdateTaskDay(task.id, e.target.value)}
+                                  aria-label={`Move "${task.title}" to another day`}
                                   className="text-[9px] bg-slate-50 border border-slate-100 rounded px-1.5 py-0.5 text-slate-500 hover:border-blue-200 cursor-pointer focus:outline-hidden"
                                 >
                                   {DAYS_OF_WEEK.map(d => (
@@ -221,6 +227,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                   onClick={() => onDeleteTask(task.id)}
                                   className="text-slate-300 hover:text-red-500 p-0.5"
                                   title="Remove"
+                                  aria-label="Remove goal"
                                 >
                                   <Trash2 className="w-3 h-3" />
                                 </button>
@@ -238,6 +245,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                   type="checkbox"
                                   checked={sub.completed}
                                   onChange={() => onToggleSubtask(task.id, idx)}
+                                  aria-label={
+                                    sub.completed
+                                      ? `Mark micro-step "${sub.text}" incomplete`
+                                      : `Mark micro-step "${sub.text}" complete`
+                                  }
                                   className="w-3 h-3 rounded text-blue-600 border-slate-300 cursor-pointer"
                                 />
                                 <span className={`text-[9px] truncate max-w-[85px] ${
@@ -379,6 +391,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                       type="checkbox"
                       checked={task.completed}
                       onChange={() => onToggleTask(task.id)}
+                      aria-label={
+                        task.completed
+                          ? `Mark "${task.title}" incomplete`
+                          : `Mark "${task.title}" complete`
+                      }
                       className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-400 cursor-pointer shrink-0"
                     />
                     <div className="flex-1 min-w-0">
@@ -410,6 +427,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                       <select
                         value="Unscheduled"
                         onChange={(e) => onUpdateTaskDay(task.id, e.target.value)}
+                        aria-label={`Schedule "${task.title}" to another day`}
                         className="text-[10px] bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-100 rounded px-2 py-1 font-bold cursor-pointer focus:outline-hidden"
                       >
                         <option value="Unscheduled">Schedule...</option>
@@ -422,6 +440,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                         onClick={() => onDeleteTask(task.id)}
                         className="text-slate-300 hover:text-red-500 p-1 cursor-pointer transition-colors"
                         title="Remove Goal"
+                        aria-label="Remove goal"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>

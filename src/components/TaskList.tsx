@@ -5,9 +5,9 @@ import { Trash2 } from "lucide-react";
 
 interface TaskListProps {
   tasks: Task[];
-  onToggleTask: (taskId: number) => void;
-  onToggleSubtask: (taskId: number, subIndex: number) => void;
-  onDeleteTask: (taskId: number) => void;
+  onToggleTask: (taskId: string) => void;
+  onToggleSubtask: (taskId: string, subIndex: number) => void;
+  onDeleteTask: (taskId: string) => void;
 }
 
 export const TaskList: React.FC<TaskListProps> = ({
@@ -88,6 +88,11 @@ export const TaskList: React.FC<TaskListProps> = ({
                       type="checkbox"
                       checked={task.completed}
                       onChange={() => onToggleTask(task.id)}
+                      aria-label={
+                        task.completed
+                          ? `Mark "${task.title}" incomplete`
+                          : `Mark "${task.title}" complete`
+                      }
                       className="mt-1 w-5 h-5 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
 
@@ -129,6 +134,7 @@ export const TaskList: React.FC<TaskListProps> = ({
                       onClick={() => onDeleteTask(task.id)}
                       className="p-1 rounded-lg text-slate-400 hover:text-red-500 transition-colors cursor-pointer shrink-0"
                       title="Remove Goal"
+                      aria-label="Remove goal"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -144,6 +150,11 @@ export const TaskList: React.FC<TaskListProps> = ({
                             checked={sub.completed}
                             onChange={() => onToggleSubtask(task.id, idx)}
                             disabled={task.completed}
+                            aria-label={
+                              sub.completed
+                                ? `Mark micro-step "${sub.text}" incomplete`
+                                : `Mark micro-step "${sub.text}" complete`
+                            }
                             className="w-3.5 h-3.5 rounded text-blue-600 border-slate-300 focus:ring-blue-400 cursor-pointer disabled:opacity-50"
                           />
                           <span

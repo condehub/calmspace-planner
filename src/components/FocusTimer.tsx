@@ -1,6 +1,21 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import { Play, Pause, RotateCcw, Volume2, Sparkles } from "lucide-react";
+import { FOCUS_SESSION_XP } from "../lib/constants";
+
+// Reuse a single AudioContext across chime plays. Browsers cap the number of
+// concurrently open AudioContext instances (~6), and creating a fresh context
+// on every call without closing it leaks them. This is a lazy module-scoped
+// singleton: the context is created on first use and kept for the app lifetime.
+let audioCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  const AudioContextCtor =
+    window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioContextCtor) return null;
+  if (!audioCtx) audioCtx = new AudioContextCtor();
+  return audioCtx;
+}
 
 interface FocusTimerProps {
   onComplete: () => void;
@@ -10,34 +25,26 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onComplete }) => {
   const [duration, setDuration] = useState<number>(15 * 60); // Default 15 minutes in seconds
   const [timeLeft, setTimeLeft] = useState<number>(15 * 60);
   const [isActive, setIsActive] = useState<boolean>(false);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Tick: decrement once per second while active. Pure state update only —
+  // completion side effects live in the separate effect below so they cannot
+  // be double-invoked by React (StrictMode double-invokes state updaters).
   useEffect(() => {
-    if (isActive) {
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timerRef.current!);
-            timerRef.current = null;
-            setIsActive(false);
-            playCalmChime();
-            onComplete();
-            return duration; // reset to duration
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+    if (!isActive) return;
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isActive]);
 
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, [isActive, duration, onComplete]);
+  // Completion: when the countdown reaches zero, stop, chime, reward and reset.
+  useEffect(() => {
+    if (timeLeft !== 0 || !isActive) return;
+    setIsActive(false);
+    playCalmChime();
+    onComplete();
+    setTimeLeft(duration);
+  }, [timeLeft, isActive, duration, onComplete]);
 
   // Handle duration change
   const selectDuration = (minutes: number) => {
@@ -58,35 +65,39 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onComplete }) => {
   // Synthesize a calming, gorgeous Zen chime using Web Audio API
   const playCalmChime = () => {
     try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContext) return;
-      const audioCtx = new AudioContext();
-      
-      const osc1 = audioCtx.createOscillator();
-      const osc2 = audioCtx.createOscillator();
-      const gainNode = audioCtx.createGain();
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      // The shared context may have been auto-suspended by the browser after a
+      // period of silence; resume it so the chime is still audible.
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gainNode = ctx.createGain();
 
       osc1.type = "sine";
-      osc1.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
-      osc1.frequency.exponentialRampToValueAtTime(783.99, audioCtx.currentTime + 2.0); // G5
+      osc1.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+      osc1.frequency.exponentialRampToValueAtTime(783.99, ctx.currentTime + 2.0); // G5
 
       osc2.type = "triangle";
-      osc2.frequency.setValueAtTime(659.25, audioCtx.currentTime); // E5
-      osc2.frequency.exponentialRampToValueAtTime(1046.50, audioCtx.currentTime + 1.8); // C6
+      osc2.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
+      osc2.frequency.exponentialRampToValueAtTime(1046.5, ctx.currentTime + 1.8); // C6
 
-      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.2, audioCtx.currentTime + 0.1);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 2.5);
+      gainNode.gain.setValueAtTime(0, ctx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.1);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.5);
 
       osc1.connect(gainNode);
       osc2.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
+      gainNode.connect(ctx.destination);
 
       osc1.start();
       osc2.start();
-      
-      osc1.stop(audioCtx.currentTime + 2.5);
-      osc2.stop(audioCtx.currentTime + 2.5);
+
+      osc1.stop(ctx.currentTime + 2.5);
+      osc2.stop(ctx.currentTime + 2.5);
     } catch (e) {
       console.warn("Web Audio API blocked or not supported", e);
     }
@@ -165,23 +176,25 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onComplete }) => {
 
         <button
           onClick={resetTimer}
-          className="px-3 py-2.5 rounded-xl border border-blue-400 hover:bg-blue-850 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
+          className="px-3 py-2.5 rounded-xl border border-blue-400 hover:bg-blue-800 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
           title="Reset"
+          aria-label="Reset timer"
         >
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
 
         <button
           onClick={playCalmChime}
-          className="px-3 py-2.5 rounded-xl border border-blue-400 hover:bg-blue-850 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
+          className="px-3 py-2.5 rounded-xl border border-blue-400 hover:bg-blue-800 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
           title="Zen Chime"
+          aria-label="Play zen chime"
         >
           <Volume2 className="w-3.5 h-3.5" />
         </button>
       </div>
 
       <div className="mt-3.5 flex items-center justify-center gap-1 text-center text-[10px] text-blue-200 font-medium">
-        <Sparkles className="w-3 h-3 text-amber-300" /> Session rewards <strong className="text-white">+25 XP</strong>
+        <Sparkles className="w-3 h-3 text-amber-300" /> Session rewards <strong className="text-white">+{FOCUS_SESSION_XP} XP</strong>
       </div>
     </div>
   );

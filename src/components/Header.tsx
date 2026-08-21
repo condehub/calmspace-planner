@@ -90,6 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
                 onClick={onSignOut}
                 className="p-1.5 text-slate-400 hover:text-red-500 bg-white border border-slate-100 rounded-lg hover:border-red-100 hover:bg-red-50/50 transition-colors cursor-pointer"
                 title="Sign Out"
+                aria-label="Sign out"
               >
                 <LogOut className="w-3.5 h-3.5" />
               </button>

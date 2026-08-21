@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+.omc/
+
+# SDD / development artifacts (not shipped to the repo)
+findings.md
+spec.md
+task.md

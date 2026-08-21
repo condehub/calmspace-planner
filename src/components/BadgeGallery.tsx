@@ -51,7 +51,7 @@ export const BadgeGallery: React.FC<BadgeGalleryProps> = ({ badges }) => {
     <div className="bg-white rounded-2xl p-5 border border-blue-50 shadow-xs transition-all">
       <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-4">Achievements</h3>
 
-      <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-5 lg:grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-2 gap-3">
         {badgeList.map((badge) => {
           const isUnlocked = badges[badge.id];
 
@@ -62,6 +62,7 @@ export const BadgeGallery: React.FC<BadgeGalleryProps> = ({ badges }) => {
             >
               <motion.div
                 whileHover={isUnlocked ? { scale: 1.04 } : {}}
+                aria-label={`${badge.name}: ${badge.desc}`}
                 className={`flex flex-col items-center p-3 rounded-xl border transition-all duration-300 ${
                   isUnlocked
                     ? "bg-blue-50/70 border-blue-100 text-blue-900"

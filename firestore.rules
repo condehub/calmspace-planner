@@ -49,13 +49,14 @@ service cloud.firestore {
     }
 
     function isValidTask(data) {
-      return data.id is int
+      return data.id is string
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
         && data.spoons is int && (data.spoons == 1 || data.spoons == 2 || data.spoons == 3)
         && data.completed is bool
         && data.dayOfWeek is string && data.dayOfWeek.size() <= 50
         && data.priority is string && (data.priority == 'Low' || data.priority == 'Medium' || data.priority == 'High')
         && data.subtasks is list
+        && data.createdAt is string
         && data.keys().hasAll(['id', 'title', 'spoons', 'completed', 'dayOfWeek', 'priority', 'subtasks'])
         && data.keys().size() <= 8;
     }

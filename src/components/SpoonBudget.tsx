@@ -16,7 +16,7 @@ export const SpoonBudget: React.FC<SpoonBudgetProps> = ({ maxSpoons, spoonsUsed 
       <div className="bg-blue-50/20 p-4 rounded-xl border border-blue-50/60 mb-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1.5 mb-3">
           <span className="font-bold text-xs text-[#0f2042]">Spoons remaining today:</span>
-          <span className="text-[11px] font-mono text-blue-850 font-bold bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100/40">
+          <span className="text-[11px] font-mono text-blue-900 font-bold bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100/40">
             {currentSpoonsAvailable} / {maxSpoons} Spoons
           </span>
         </div>

@@ -4,13 +4,14 @@ export interface SubTask {
 }
 
 export interface Task {
-  id: number;
+  id: string;
   title: string;
   spoons: number; // 1, 2, or 3
   subtasks: SubTask[];
   completed: boolean;
   dayOfWeek?: string; // "Monday", "Tuesday", etc. or undefined for unscheduled/today
   priority?: "Low" | "Medium" | "High";
+  createdAt?: string; // ISO timestamp, used for stable ordering (newest first)
 }
 
 export interface Badges {
@@ -19,14 +20,6 @@ export interface Badges {
   deepFocus: boolean;   // complete a focus timer session
   energized: boolean;   // complete a 3-spoon task
   levelUp: boolean;     // reached level 2 or higher
-}
-
-export interface BadgeCatalogItem {
-  id: keyof Badges;
-  name: string;
-  desc: string;
-  iconName: string; // Lucide icon name or emoji
-  emoji: string;
 }
 
 export interface AppState {

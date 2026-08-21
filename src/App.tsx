@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Header } from "./components/Header";
 import { TaskCreator } from "./components/TaskCreator";
@@ -7,7 +7,16 @@ import { SpoonBudget } from "./components/SpoonBudget";
 import { FocusTimer } from "./components/FocusTimer";
 import { BadgeGallery } from "./components/BadgeGallery";
 import { WeeklyCalendar } from "./components/WeeklyCalendar";
-import { Task, AppState } from "./types";
+import { Task, AppState, Badges } from "./types";
+import { FOCUS_SESSION_XP } from "./lib/constants";
+import {
+  applyXP,
+  affectsToday,
+  addSpoons,
+  removeSpoons,
+  badgesForTaskCompletion,
+  badgesForTaskCreation,
+} from "./lib/gameLogic";
 import { RefreshCcw, Bell, Calendar } from "lucide-react";
 
 // Firebase Integration
@@ -32,11 +41,19 @@ import {
   deleteDoc,
   collection,
   onSnapshot,
+  writeBatch,
 } from "firebase/firestore";
 
 const getTodayName = () => {
   const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   return days[new Date().getDay()];
+};
+
+const generateId = (): string => {
+  if (typeof globalThis.crypto !== "undefined" && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 };
 
 interface Toast {
@@ -59,14 +76,32 @@ const DEFAULT_STATE: AppState = {
   },
 };
 
+// Toast copy for badge unlocks, keyed by badge name so every unlock site shows
+// the same message (matches the pre-refactor wording exactly).
+const BADGE_TOAST_MESSAGES: Record<keyof Badges, string> = {
+  firstStep: "🌱 Unlocked Badge: First Step!",
+  microMaster: "🧩 Unlocked Badge: Step Weaver!",
+  energized: "🔋 Unlocked Badge: Heavy Lifter!",
+  deepFocus: "🧘 Unlocked Badge: Deep Diver!",
+  levelUp: "🌟 Unlocked Badge: Ascendant!",
+};
+
 export default function App() {
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [activeTab, setActiveTab] = useState<"daily" | "weekly">("daily");
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Auth States
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(isFirebaseConfigured);
+
+  // Latest-state ref, used by the Firestore sync effect to seed the profile
+  // without relying on a stale closure value.
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   // 1. Auth Listener
   useEffect(() => {
@@ -123,13 +158,15 @@ export default function App() {
             badges: data.badges ? { ...prev.badges, ...data.badges } : prev.badges,
           }));
         } else {
-          // If profile doesn't exist, create one with the current active state
+          // If profile doesn't exist, create one with the latest known state
+          // (read via stateRef to avoid the stale closure captured by this effect).
+          const latest = stateRef.current;
           const initialProfile = {
-            xp: state.xp,
-            level: state.level,
-            spoonsUsed: state.spoonsUsed,
-            maxSpoons: state.maxSpoons,
-            badges: state.badges,
+            xp: latest.xp,
+            level: latest.level,
+            spoonsUsed: latest.spoonsUsed,
+            maxSpoons: latest.maxSpoons,
+            badges: latest.badges,
             updatedAt: new Date().toISOString(),
           };
           setDoc(profileRef, initialProfile).catch((err) => {
@@ -158,10 +195,11 @@ export default function App() {
             completed: data.completed || false,
             dayOfWeek: data.dayOfWeek,
             priority: data.priority,
+            createdAt: data.createdAt,
           });
         });
-        // Sort newest first
-        fetchedTasks.sort((a, b) => b.id - a.id);
+        // Sort newest first by createdAt
+        fetchedTasks.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
         setState((prev) => ({
           ...prev,
           tasks: fetchedTasks,
@@ -207,7 +245,7 @@ export default function App() {
   const saveTaskToDb = async (task: Task) => {
     if (currentUser && isFirebaseConfigured && db) {
       const userId = currentUser.uid;
-      const taskRef = doc(db, "users", userId, "tasks", String(task.id));
+      const taskRef = doc(db, "users", userId, "tasks", task.id);
       try {
         await setDoc(taskRef, {
           id: task.id,
@@ -226,10 +264,10 @@ export default function App() {
   };
 
   // Helper to delete task document in DB
-  const deleteTaskFromDb = async (taskId: number) => {
+  const deleteTaskFromDb = async (taskId: string) => {
     if (currentUser && isFirebaseConfigured && db) {
       const userId = currentUser.uid;
-      const taskRef = doc(db, "users", userId, "tasks", String(taskId));
+      const taskRef = doc(db, "users", userId, "tasks", taskId);
       try {
         await deleteDoc(taskRef);
       } catch (err) {
@@ -273,33 +311,6 @@ export default function App() {
     }
   };
 
-  // XP progression system
-  const addXP = (amount: number, currentState: AppState) => {
-    let newXP = currentState.xp + amount;
-    let newLevel = currentState.level;
-    let xpNeeded = newLevel * 100;
-    let upgradedBadges = { ...currentState.badges };
-
-    while (newXP >= xpNeeded) {
-      newXP -= xpNeeded;
-      newLevel++;
-      xpNeeded = newLevel * 100;
-      showToast(`🎉 Level Up! You reached Level ${newLevel}!`);
-
-      if (newLevel >= 2 && !upgradedBadges.levelUp) {
-        upgradedBadges.levelUp = true;
-        showToast("🌟 Unlocked Badge: Ascendant!");
-      }
-    }
-
-    return {
-      ...currentState,
-      xp: newXP,
-      level: newLevel,
-      badges: upgradedBadges,
-    };
-  };
-
   // Create task
   const handleAddTask = async (
     title: string,
@@ -311,19 +322,20 @@ export default function App() {
     const mappedSubtasks = subtasks.map((text) => ({ text, completed: false }));
     const taskDay = day || "Unscheduled";
     const newTask: Task = {
-      id: Date.now(),
+      id: generateId(),
       title,
       spoons,
       subtasks: mappedSubtasks,
       completed: false,
       dayOfWeek: taskDay,
       priority: priority || "Medium",
+      createdAt: new Date().toISOString(),
     };
 
     let updatedSpoonsUsed = state.spoonsUsed;
     const todayName = getTodayName();
-    if (taskDay === "Unscheduled" || taskDay === todayName) {
-      updatedSpoonsUsed += spoons;
+    if (affectsToday(taskDay, todayName)) {
+      updatedSpoonsUsed = addSpoons(updatedSpoonsUsed, spoons);
     }
 
     let updatedState = {
@@ -332,7 +344,25 @@ export default function App() {
       spoonsUsed: updatedSpoonsUsed,
     };
 
-    updatedState = addXP(20, updatedState);
+    const xpResult = applyXP(updatedState, 20);
+    updatedState = xpResult.state;
+    xpResult.levelUps.forEach((lvl) =>
+      showToast(`🎉 Level Up! You reached Level ${lvl}!`)
+    );
+    xpResult.unlockedBadges.forEach((badge) =>
+      showToast(BADGE_TOAST_MESSAGES[badge])
+    );
+
+    // "Step Weaver" is earned by breaking a task into ≥2 micro-steps at creation.
+    const creationBadges = badgesForTaskCreation(
+      mappedSubtasks.length,
+      updatedState.badges
+    );
+    updatedState.badges = creationBadges.badges;
+    creationBadges.unlocked.forEach((badge) =>
+      showToast(BADGE_TOAST_MESSAGES[badge])
+    );
+
     showToast("Goal added to voyage! +20 XP");
 
     if (currentUser && isFirebaseConfigured && db) {
@@ -349,7 +379,7 @@ export default function App() {
   };
 
   // Toggle main task
-  const handleToggleTask = async (taskId: number) => {
+  const handleToggleTask = async (taskId: string) => {
     const taskIndex = state.tasks.findIndex((t) => t.id === taskId);
     if (taskIndex === -1) return;
 
@@ -368,40 +398,38 @@ export default function App() {
     });
 
     let updatedSpoonsUsed = state.spoonsUsed;
-    let upgradedBadges = { ...state.badges };
     let tempState = { ...state, tasks: updatedTasks };
 
     const todayName = getTodayName();
-    const taskDay = task.dayOfWeek || "Unscheduled";
-    const affectsToday = taskDay === "Unscheduled" || taskDay === todayName;
+    const taskAffectsToday = affectsToday(task.dayOfWeek, todayName);
 
     if (isNowCompleted) {
-      if (affectsToday) {
-        updatedSpoonsUsed = Math.max(0, state.spoonsUsed - task.spoons);
+      if (taskAffectsToday) {
+        updatedSpoonsUsed = removeSpoons(state.spoonsUsed, task.spoons);
         tempState.spoonsUsed = updatedSpoonsUsed;
       }
 
       const xpEarned = 50 + task.spoons * 15;
-      tempState = addXP(xpEarned, tempState);
+      const xpResult = applyXP(tempState, xpEarned);
+      tempState = xpResult.state;
+      xpResult.levelUps.forEach((lvl) =>
+        showToast(`🎉 Level Up! You reached Level ${lvl}!`)
+      );
+      xpResult.unlockedBadges.forEach((badge) =>
+        showToast(BADGE_TOAST_MESSAGES[badge])
+      );
       showToast(`Goal Completed! +${xpEarned} XP`);
 
-      if (!upgradedBadges.firstStep) {
-        upgradedBadges.firstStep = true;
-        showToast("🌱 Unlocked Badge: First Step!");
-      }
-      if (task.subtasks.length >= 2 && !upgradedBadges.microMaster) {
-        upgradedBadges.microMaster = true;
-        showToast("🧩 Unlocked Badge: Step Weaver!");
-      }
-      if (task.spoons === 3 && !upgradedBadges.energized) {
-        upgradedBadges.energized = true;
-        showToast("🔋 Unlocked Badge: Heavy Lifter!");
-      }
-
-      tempState.badges = upgradedBadges;
+      // Start from the badges returned by applyXP (which may already include
+      // `levelUp`), so no unlock is dropped when we persist.
+      const completionBadges = badgesForTaskCompletion(task, tempState.badges);
+      tempState.badges = completionBadges.badges;
+      completionBadges.unlocked.forEach((badge) =>
+        showToast(BADGE_TOAST_MESSAGES[badge])
+      );
     } else {
-      if (affectsToday) {
-        updatedSpoonsUsed = state.spoonsUsed + task.spoons;
+      if (taskAffectsToday) {
+        updatedSpoonsUsed = addSpoons(state.spoonsUsed, task.spoons);
         tempState.spoonsUsed = updatedSpoonsUsed;
       }
     }
@@ -425,7 +453,7 @@ export default function App() {
   };
 
   // Toggle subtask
-  const handleToggleSubtask = async (taskId: number, subIndex: number) => {
+  const handleToggleSubtask = async (taskId: string, subIndex: number) => {
     const parentTask = state.tasks.find((t) => t.id === taskId);
     if (!parentTask) return;
 
@@ -446,7 +474,14 @@ export default function App() {
     let tempState = { ...state, tasks: updatedTasks };
 
     if (subtaskCompletedNow) {
-      tempState = addXP(5, tempState);
+      const xpResult = applyXP(tempState, 5);
+      tempState = xpResult.state;
+      xpResult.levelUps.forEach((lvl) =>
+        showToast(`🎉 Level Up! You reached Level ${lvl}!`)
+      );
+      xpResult.unlockedBadges.forEach((badge) =>
+        showToast(BADGE_TOAST_MESSAGES[badge])
+      );
       showToast("Micro-step checked! +5 XP");
     }
 
@@ -466,17 +501,16 @@ export default function App() {
   };
 
   // Delete task
-  const handleDeleteTask = async (taskId: number) => {
+  const handleDeleteTask = async (taskId: string) => {
     const task = state.tasks.find((t) => t.id === taskId);
     if (!task) return;
 
     let updatedSpoonsUsed = state.spoonsUsed;
     const todayName = getTodayName();
-    const taskDay = task.dayOfWeek || "Unscheduled";
-    const affectsToday = taskDay === "Unscheduled" || taskDay === todayName;
+    const taskAffectsToday = affectsToday(task.dayOfWeek, todayName);
 
-    if (!task.completed && affectsToday) {
-      updatedSpoonsUsed = Math.max(0, state.spoonsUsed - task.spoons);
+    if (!task.completed && taskAffectsToday) {
+      updatedSpoonsUsed = removeSpoons(state.spoonsUsed, task.spoons);
     }
 
     const updatedTasks = state.tasks.filter((t) => t.id !== taskId);
@@ -500,21 +534,20 @@ export default function App() {
   };
 
   // Move task to a different day of the week
-  const handleUpdateTaskDay = async (taskId: number, newDay: string) => {
+  const handleUpdateTaskDay = async (taskId: string, newDay: string) => {
     const todayName = getTodayName();
     let updatedSpoonsUsed = state.spoonsUsed;
 
     const task = state.tasks.find((t) => t.id === taskId);
     if (!task) return;
 
-    const oldDay = task.dayOfWeek || "Unscheduled";
     if (!task.completed) {
-      const oldContributed = oldDay === "Unscheduled" || oldDay === todayName;
-      const newContributes = newDay === "Unscheduled" || newDay === todayName;
+      const oldContributed = affectsToday(task.dayOfWeek, todayName);
+      const newContributes = affectsToday(newDay, todayName);
       if (oldContributed && !newContributes) {
-        updatedSpoonsUsed = Math.max(0, updatedSpoonsUsed - task.spoons);
+        updatedSpoonsUsed = removeSpoons(updatedSpoonsUsed, task.spoons);
       } else if (!oldContributed && newContributes) {
-        updatedSpoonsUsed = updatedSpoonsUsed + task.spoons;
+        updatedSpoonsUsed = addSpoons(updatedSpoonsUsed, task.spoons);
       }
     }
 
@@ -547,14 +580,21 @@ export default function App() {
   // Timer complete
   const handleTimerComplete = async () => {
     let updatedState = { ...state };
-    updatedState = addXP(100, updatedState);
+    const xpResult = applyXP(updatedState, FOCUS_SESSION_XP);
+    updatedState = xpResult.state;
+    xpResult.levelUps.forEach((lvl) =>
+      showToast(`🎉 Level Up! You reached Level ${lvl}!`)
+    );
+    xpResult.unlockedBadges.forEach((badge) =>
+      showToast(BADGE_TOAST_MESSAGES[badge])
+    );
 
     if (!updatedState.badges.deepFocus) {
-      updatedState.badges.deepFocus = true;
+      updatedState.badges = { ...updatedState.badges, deepFocus: true };
       showToast("🧘 Unlocked Badge: Deep Diver!");
     }
 
-    showToast("🧘 Focus session completed! +100 XP!");
+    showToast(`🧘 Focus session completed! +${FOCUS_SESSION_XP} XP!`);
 
     if (currentUser && isFirebaseConfigured && db) {
       await updateProfileState({
@@ -569,35 +609,35 @@ export default function App() {
 
   // Fresh voyage start
   const handleResetApp = async () => {
-    if (
-      window.confirm(
-        "Would you like to reset your CalmSpace profile? This resets all tasks, XP, level, and achievements back to baseline, allowing you to start a fresh day!"
-      )
-    ) {
-      if (currentUser && isFirebaseConfigured && db) {
-        const userId = currentUser.uid;
-        try {
-          const profileRef = doc(db, "users", userId);
-          await setDoc(profileRef, {
-            xp: DEFAULT_STATE.xp,
-            level: DEFAULT_STATE.level,
-            spoonsUsed: DEFAULT_STATE.spoonsUsed,
-            maxSpoons: DEFAULT_STATE.maxSpoons,
-            badges: DEFAULT_STATE.badges,
-            updatedAt: new Date().toISOString(),
-          });
+    if (currentUser && isFirebaseConfigured && db) {
+      const userId = currentUser.uid;
+      try {
+        // Reset the profile and clear all tasks in a single atomic batch so a
+        // mid-way failure can't leave the board half-reset.
+        const batch = writeBatch(db);
+        batch.set(doc(db, "users", userId), {
+          xp: DEFAULT_STATE.xp,
+          level: DEFAULT_STATE.level,
+          spoonsUsed: DEFAULT_STATE.spoonsUsed,
+          maxSpoons: DEFAULT_STATE.maxSpoons,
+          badges: DEFAULT_STATE.badges,
+          updatedAt: new Date().toISOString(),
+        });
 
-          for (const task of state.tasks) {
-            await deleteDoc(doc(db, "users", userId, "tasks", String(task.id)));
-          }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `users/${userId}`);
+        const tasksRef = collection(db, "users", userId, "tasks");
+        for (const task of state.tasks) {
+          batch.delete(doc(tasksRef, task.id));
         }
-      } else {
-        saveState(DEFAULT_STATE);
+
+        await batch.commit();
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `users/${userId}`);
       }
-      showToast("⚓ Safe journey! Board reset successfully.");
+    } else {
+      saveState(DEFAULT_STATE);
     }
+    showToast("⚓ Safe journey! Board reset successfully.");
+    setShowResetConfirm(false);
   };
 
   return (
@@ -691,7 +731,7 @@ export default function App() {
                 {/* Profile Utilities */}
                 <div className="flex justify-center pt-2">
                   <button
-                    onClick={handleResetApp}
+                    onClick={() => setShowResetConfirm(true)}
                     className="inline-flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-red-500 hover:bg-red-50/50 py-2 px-4 rounded-xl border border-transparent hover:border-red-100 transition-all cursor-pointer"
                   >
                     <RefreshCcw className="w-3.5 h-3.5" /> Fresh Voyage Start
@@ -720,7 +760,7 @@ export default function App() {
               {/* Profile Utilities (Centred) */}
               <div className="flex justify-center pt-2">
                 <button
-                  onClick={handleResetApp}
+                  onClick={() => setShowResetConfirm(true)}
                   className="inline-flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-red-500 hover:bg-red-50/50 py-2 px-4 rounded-xl border border-transparent hover:border-red-100 transition-all cursor-pointer"
                 >
                   <RefreshCcw className="w-3.5 h-3.5" /> Fresh Voyage Start
@@ -736,6 +776,51 @@ export default function App() {
             Designed to support executive functions. Zero pressure, pure pace. Keep navigating.
           </p>
         </footer>
+
+        {/* Reset Confirmation Modal */}
+        <AnimatePresence>
+          {showResetConfirm && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
+              onClick={() => setShowResetConfirm(false)}
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.15 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-2xl shadow-xl border border-blue-100 p-6 max-w-md w-full text-center"
+              >
+                <h3 className="text-lg font-bold text-[#0f2042] mb-2">
+                  Fresh Voyage Start
+                </h3>
+                <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+                  Would you like to reset your CalmSpace profile? This resets all
+                  tasks, XP, level, and achievements back to baseline, allowing
+                  you to start a fresh day!
+                </p>
+                <div className="flex justify-center gap-3">
+                  <button
+                    onClick={() => setShowResetConfirm(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 border border-slate-200 transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleResetApp}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-red-500 hover:bg-red-600 transition-all cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

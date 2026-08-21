@@ -29,7 +29,7 @@
       "description": "Represents an individual goal or task scheduled for a specific day or unscheduled.",
       "type": "object",
       "properties": {
-        "id": { "type": "integer" },
+        "id": { "type": "string" },
         "title": { "type": "string", "minLength": 1, "maxLength": 200 },
         "spoons": { "type": "integer", "enum": [1, 2, 3] },
         "subtasks": {
